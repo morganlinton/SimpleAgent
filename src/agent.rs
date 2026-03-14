@@ -9,14 +9,21 @@ pub struct Agent {
     client: OllamaClient,
     tools: ToolRegistry,
     model: String,
+    debug_tool_calls: bool,
 }
 
 impl Agent {
-    pub fn new(client: OllamaClient, tools: ToolRegistry, model: String) -> Self {
+    pub fn new(
+        client: OllamaClient,
+        tools: ToolRegistry,
+        model: String,
+        debug_tool_calls: bool,
+    ) -> Self {
         Self {
             client,
             tools,
             model,
+            debug_tool_calls,
         }
     }
 
@@ -53,16 +60,20 @@ impl Agent {
             for tool_call in tool_calls {
                 let tool_name = tool_call.function.name;
                 let arguments = tool_call.function.arguments;
-                let serialized_args = serde_json::to_string_pretty(&arguments)
-                    .unwrap_or_else(|_| "<invalid json>".to_string());
-                eprintln!("tool -> {tool_name} {serialized_args}");
+                if self.debug_tool_calls {
+                    let serialized_args = serde_json::to_string_pretty(&arguments)
+                        .unwrap_or_else(|_| "<invalid json>".to_string());
+                    eprintln!("tool -> {tool_name} {serialized_args}");
+                }
 
                 let result = match self.tools.execute(&tool_name, &arguments) {
                     Ok(output) => output,
                     Err(error) => format!("Tool error: {error}"),
                 };
 
-                eprintln!("tool <- {}", preview(&result));
+                if self.debug_tool_calls {
+                    eprintln!("tool <- {}", preview(&result));
+                }
                 messages.push(ChatMessage::tool_result(tool_name, result));
             }
 

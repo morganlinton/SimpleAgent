@@ -18,8 +18,10 @@ use ollama::{is_local_ollama_host, InstalledModel, OllamaClient};
 use tools::ToolRegistry;
 
 const DEFAULT_MODEL: &str = "qwen3:4b";
+const FALLBACK_MODEL: &str = "llama3.2:latest";
 const DEFAULT_HOST: &str = "http://127.0.0.1:11434";
 const ALLOW_REMOTE_HOST_ENV: &str = "SIMPLE_AGENT_ALLOW_REMOTE_OLLAMA";
+const DEBUG_TOOL_ENV: &str = "SIMPLE_AGENT_DEBUG_TOOLS";
 
 #[derive(Debug)]
 struct Config {
@@ -85,6 +87,7 @@ fn print_help() {
     println!("  SIMPLE_AGENT_MODEL   Skip the picker and use this model");
     println!("  OLLAMA_HOST          Ollama host URL (default: {DEFAULT_HOST})");
     println!("  {ALLOW_REMOTE_HOST_ENV}   Allow a non-local OLLAMA_HOST (disabled by default)");
+    println!("  {DEBUG_TOOL_ENV}   Print tool arguments and result previews to stderr");
 }
 
 fn main() -> Result<()> {
@@ -96,12 +99,18 @@ fn main() -> Result<()> {
     ensure_safe_ollama_host(&config.host)?;
     let client = OllamaClient::new(&config.host)?;
     let model = resolve_model(&client, &config)?;
+    let debug_tool_calls = env_flag(DEBUG_TOOL_ENV);
 
     if config.prompt.is_none() {
         warm_selected_model(&client, &model)?;
     }
 
-    let agent = Agent::new(client, ToolRegistry::new(workspace_root), model.clone());
+    let agent = Agent::new(
+        client,
+        ToolRegistry::new(workspace_root),
+        model.clone(),
+        debug_tool_calls,
+    );
 
     if let Some(prompt) = config.prompt {
         stream_response(&agent, &prompt, None)?;
@@ -204,10 +213,34 @@ fn resolve_model(client: &OllamaClient, config: &Config) -> Result<String> {
     }
 
     if config.prompt.is_some() {
-        return Ok(DEFAULT_MODEL.to_string());
+        return select_model_for_one_shot(client);
     }
 
     select_model_interactively(client)
+}
+
+fn select_model_for_one_shot(client: &OllamaClient) -> Result<String> {
+    let models = client.list_models()?;
+    if models.is_empty() {
+        bail!("No local Ollama models are installed. Run `ollama pull {DEFAULT_MODEL}` first.");
+    }
+
+    if let Some(model) = find_preferred_model(&models) {
+        return Ok(model.name.clone());
+    }
+
+    if models.len() == 1 {
+        return Ok(models[0].name.clone());
+    }
+
+    let installed = models
+        .iter()
+        .map(|model| model.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    bail!(
+        "No default one-shot model is installed. Pass `--model` explicitly or install `{DEFAULT_MODEL}`. Installed models: {installed}"
+    );
 }
 
 fn select_model_interactively(client: &OllamaClient) -> Result<String> {
@@ -216,9 +249,8 @@ fn select_model_interactively(client: &OllamaClient) -> Result<String> {
         bail!("No local Ollama models are installed. Run `ollama pull {DEFAULT_MODEL}` first.");
     }
 
-    let default_index = models
-        .iter()
-        .position(|model| model.name == DEFAULT_MODEL)
+    let default_index = find_preferred_model(&models)
+        .and_then(|preferred| models.iter().position(|model| model.name == preferred.name))
         .unwrap_or(0);
 
     println!("Select a model to run:");
@@ -279,6 +311,16 @@ fn match_model_name<'a>(models: &'a [InstalledModel], input: &str) -> Option<&'a
     models.iter().find(|model| model.name == input)
 }
 
+fn find_preferred_model<'a>(models: &'a [InstalledModel]) -> Option<&'a InstalledModel> {
+    for name in [DEFAULT_MODEL, FALLBACK_MODEL, "llama3.2"] {
+        if let Some(model) = models.iter().find(|model| model.name == name) {
+            return Some(model);
+        }
+    }
+
+    None
+}
+
 fn warm_selected_model(client: &OllamaClient, model: &str) -> Result<()> {
     let message = format!("Loading model `{model}`");
     run_with_spinner(&message, || client.warm_model(model))?;
@@ -307,6 +349,12 @@ where
     let result = task();
     spinner.stop(None)?;
     result
+}
+
+fn env_flag(name: &str) -> bool {
+    env::var(name)
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
 }
 
 struct Spinner {

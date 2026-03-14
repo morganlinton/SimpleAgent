@@ -2,6 +2,9 @@
 name = "simple-agent"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+description = "A small Rust CLI for learning how local AI agents use tools."
+repository = "https://github.com/morganlinton/SimpleAgent"
 
 [dependencies]
 anyhow = "1.0"

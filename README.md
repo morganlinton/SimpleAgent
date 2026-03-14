@@ -66,7 +66,7 @@ On startup, the app will:
 Or pass a one-shot prompt:
 
 ```bash
-cargo run -- "What tools do you have, and what files are in this workspace?"
+cargo run -- --model qwen3:4b "What tools do you have, and what files are in this workspace?"
 ```
 
 If you want to skip the picker, pass a model explicitly:
@@ -99,6 +99,11 @@ The file tools are intentionally limited to the current workspace so the example
 - By default, the app only allows local Ollama hosts such as `http://127.0.0.1:11434` and `http://localhost:11434`.
 - If you intentionally want to use a remote Ollama server, set `SIMPLE_AGENT_ALLOW_REMOTE_OLLAMA=1` first. Otherwise the app will refuse to start.
 - File tools can read any file inside the current workspace. Do not run the agent in a directory that contains secrets unless you trust the model backend you are using.
+- Tool-call debugging is off by default. Set `SIMPLE_AGENT_DEBUG_TOOLS=1` only if you explicitly want tool arguments and tool-result previews printed to `stderr`.
+
+## License
+
+This project is licensed under the MIT License. See [`LICENSE`](./LICENSE).
 
 ## Useful commands
 
