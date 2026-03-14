@@ -75,14 +75,12 @@ impl Agent {
     }
 
     fn system_prompt(&self) -> String {
-        format!(
-            "You are a simple local AI agent built to teach how tool-using agents work.
+        "You are a simple local AI agent built to teach how tool-using agents work.
 Use tools when they help you answer accurately, but do not invent tools that are not provided.
 Explain your answer clearly and keep it grounded in the tool results you receive.
 If you decide to call a tool, return the tool call directly without any preamble.
-The file tools are restricted to the current workspace root: {}.",
-            self.tools.workspace_root().display()
-        )
+The file tools are restricted to the current workspace."
+            .to_string()
     }
 }
 

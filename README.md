@@ -94,6 +94,12 @@ The core loop lives in [`src/agent.rs`](./src/agent.rs):
 
 The file tools are intentionally limited to the current workspace so the example stays safe and easy to understand.
 
+## Safety Notes
+
+- By default, the app only allows local Ollama hosts such as `http://127.0.0.1:11434` and `http://localhost:11434`.
+- If you intentionally want to use a remote Ollama server, set `SIMPLE_AGENT_ALLOW_REMOTE_OLLAMA=1` first. Otherwise the app will refuse to start.
+- File tools can read any file inside the current workspace. Do not run the agent in a directory that contains secrets unless you trust the model backend you are using.
+
 ## Useful commands
 
 ```bash
@@ -101,7 +107,7 @@ cargo run -- --model llama3.2 "Read Cargo.toml and summarize the dependencies."
 cargo test
 ```
 
-You can also point the app at a different Ollama server:
+You can also point the app at a different local Ollama server:
 
 ```bash
 OLLAMA_HOST=http://127.0.0.1:11434 cargo run -- "What time is it?"

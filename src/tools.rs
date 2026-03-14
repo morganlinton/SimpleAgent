@@ -1,6 +1,7 @@
 use std::cmp::min;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::fs::{self, File};
+use std::io::Read;
+use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::Local;
@@ -11,6 +12,7 @@ use crate::ollama::{ToolDefinition, ToolFunctionDefinition};
 const DEFAULT_READ_LIMIT: usize = 4_000;
 const MAX_READ_LIMIT: usize = 10_000;
 const MAX_LIST_ENTRIES: usize = 100;
+const UTF8_MAX_BYTES_PER_CHAR: usize = 4;
 
 #[derive(Debug, Clone)]
 pub struct ToolRegistry {
@@ -20,10 +22,6 @@ pub struct ToolRegistry {
 impl ToolRegistry {
     pub fn new(workspace_root: PathBuf) -> Self {
         Self { workspace_root }
-    }
-
-    pub fn workspace_root(&self) -> &Path {
-        &self.workspace_root
     }
 
     pub fn definitions(&self) -> Vec<ToolDefinition> {
@@ -175,11 +173,25 @@ impl ToolRegistry {
                 .unwrap_or(DEFAULT_READ_LIMIT as u64) as usize,
             MAX_READ_LIMIT,
         );
-        let bytes =
-            fs::read(&target).with_context(|| format!("failed to read `{}`", target.display()))?;
+        let byte_limit = limit
+            .saturating_mul(UTF8_MAX_BYTES_PER_CHAR)
+            .saturating_add(1);
+        let mut file = File::open(&target)
+            .with_context(|| format!("failed to open `{}`", target.display()))?;
+        let mut limited_reader = file.by_ref().take((byte_limit + 1) as u64);
+        let mut bytes = Vec::new();
+        limited_reader
+            .read_to_end(&mut bytes)
+            .with_context(|| format!("failed to read `{}`", target.display()))?;
+
+        let exceeded_byte_limit = bytes.len() > byte_limit;
+        if exceeded_byte_limit {
+            bytes.truncate(byte_limit);
+        }
+
         let content = String::from_utf8_lossy(&bytes);
         let truncated = truncate_chars(&content, limit);
-        let was_truncated = content.chars().count() > limit;
+        let was_truncated = exceeded_byte_limit || content.chars().count() > limit;
 
         if !was_truncated {
             return Ok(format!("Contents of `{relative_path}`:\n{truncated}"));

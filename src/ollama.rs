@@ -319,6 +319,12 @@ impl OllamaClient {
     }
 }
 
+pub fn is_local_ollama_host(base_url: &str) -> Result<bool> {
+    let (address, _, _) = parse_http_endpoint(base_url)?;
+    let host = extract_host(&address);
+    Ok(matches!(host, "localhost" | "127.0.0.1" | "::1"))
+}
+
 #[derive(Debug)]
 struct ParsedHttpResponse {
     status_code: u16,
@@ -455,6 +461,19 @@ fn parse_http_endpoint(base_url: &str) -> Result<(String, String, String)> {
     };
 
     Ok((host_port.to_string(), host_port.to_string(), api_base_path))
+}
+
+fn extract_host(authority: &str) -> &str {
+    if authority.starts_with('[') {
+        if let Some(end) = authority.find(']') {
+            return &authority[1..end];
+        }
+    }
+
+    authority
+        .rsplit_once(':')
+        .map(|(host, _)| host)
+        .unwrap_or(authority)
 }
 
 fn parse_http_response_head<R: BufRead>(reader: &mut R) -> Result<(u16, HashMap<String, String>)> {
@@ -609,8 +628,8 @@ mod tests {
     use std::io::{BufReader, Cursor, Read};
 
     use super::{
-        parse_http_endpoint, parse_http_response, parse_http_response_head, read_stream_chunk,
-        ChunkedReader, ModelListResponse,
+        is_local_ollama_host, parse_http_endpoint, parse_http_response, parse_http_response_head,
+        read_stream_chunk, ChunkedReader, ModelListResponse,
     };
 
     #[test]
@@ -694,5 +713,12 @@ mod tests {
         assert_eq!(second.message.content, " there");
         assert!(second.done);
         assert!(end.is_none());
+    }
+
+    #[test]
+    fn identifies_local_ollama_hosts() {
+        assert!(is_local_ollama_host("http://127.0.0.1:11434").expect("local host"));
+        assert!(is_local_ollama_host("http://localhost:11434/api").expect("localhost"));
+        assert!(!is_local_ollama_host("http://192.168.1.20:11434").expect("remote host"));
     }
 }

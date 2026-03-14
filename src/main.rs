@@ -14,11 +14,12 @@ use std::time::{Duration, Instant};
 
 use agent::Agent;
 use anyhow::{bail, Context, Result};
-use ollama::{InstalledModel, OllamaClient};
+use ollama::{is_local_ollama_host, InstalledModel, OllamaClient};
 use tools::ToolRegistry;
 
 const DEFAULT_MODEL: &str = "qwen3:4b";
 const DEFAULT_HOST: &str = "http://127.0.0.1:11434";
+const ALLOW_REMOTE_HOST_ENV: &str = "SIMPLE_AGENT_ALLOW_REMOTE_OLLAMA";
 
 #[derive(Debug)]
 struct Config {
@@ -83,6 +84,7 @@ fn print_help() {
     println!("Environment variables:");
     println!("  SIMPLE_AGENT_MODEL   Skip the picker and use this model");
     println!("  OLLAMA_HOST          Ollama host URL (default: {DEFAULT_HOST})");
+    println!("  {ALLOW_REMOTE_HOST_ENV}   Allow a non-local OLLAMA_HOST (disabled by default)");
 }
 
 fn main() -> Result<()> {
@@ -91,6 +93,7 @@ fn main() -> Result<()> {
         .context("failed to detect current workspace")?
         .canonicalize()
         .context("failed to resolve workspace path")?;
+    ensure_safe_ollama_host(&config.host)?;
     let client = OllamaClient::new(&config.host)?;
     let model = resolve_model(&client, &config)?;
 
@@ -149,6 +152,24 @@ fn run_repl(agent: &Agent, model: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn ensure_safe_ollama_host(host: &str) -> Result<()> {
+    if is_local_ollama_host(host)? {
+        return Ok(());
+    }
+
+    let allow_remote = env::var(ALLOW_REMOTE_HOST_ENV)
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false);
+
+    if allow_remote {
+        return Ok(());
+    }
+
+    bail!(
+        "Refusing to use non-local Ollama host `{host}` because prompts and tool results may leave your machine. Set {ALLOW_REMOTE_HOST_ENV}=1 to allow this explicitly."
+    );
 }
 
 fn stream_response(agent: &Agent, prompt: &str, prefix: Option<&str>) -> Result<()> {
