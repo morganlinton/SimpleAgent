@@ -88,16 +88,27 @@ struct ChatRequest<'a> {
 pub struct OllamaClient {
     address: String,
     host_header: String,
-    chat_path: String,
+    api_base_path: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct InstalledModel {
+    pub name: String,
+    pub size: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelListResponse {
+    models: Vec<InstalledModel>,
 }
 
 impl OllamaClient {
     pub fn new(base_url: &str) -> Result<Self> {
-        let (address, host_header, chat_path) = parse_http_endpoint(base_url)?;
+        let (address, host_header, api_base_path) = parse_http_endpoint(base_url)?;
         Ok(Self {
             address,
             host_header,
-            chat_path,
+            api_base_path,
         })
     }
 
@@ -114,30 +125,7 @@ impl OllamaClient {
             stream: false,
         };
         let payload = serde_json::to_vec(&request).context("failed to encode Ollama request")?;
-
-        let mut stream = TcpStream::connect(&self.address)
-            .with_context(|| format!("failed to reach Ollama at http://{}", self.address))?;
-        let request_head = format!(
-            "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            self.chat_path,
-            self.host_header,
-            payload.len()
-        );
-
-        stream
-            .write_all(request_head.as_bytes())
-            .context("failed to write HTTP request head")?;
-        stream
-            .write_all(&payload)
-            .context("failed to write Ollama request body")?;
-        stream.flush().context("failed to flush Ollama request")?;
-
-        let mut response_bytes = Vec::new();
-        stream
-            .read_to_end(&mut response_bytes)
-            .context("failed to read Ollama response")?;
-
-        let response = parse_http_response(&response_bytes)?;
+        let response = self.send_request("POST", &self.chat_path(), Some(&payload))?;
         if response.status_code != 200 {
             bail!(
                 "Ollama returned {}: {}",
@@ -148,6 +136,75 @@ impl OllamaClient {
 
         serde_json::from_slice::<ChatResponse>(&response.body)
             .context("failed to decode Ollama response")
+    }
+
+    pub fn list_models(&self) -> Result<Vec<InstalledModel>> {
+        let response = self.send_request("GET", &self.tags_path(), None)?;
+        if response.status_code != 200 {
+            bail!(
+                "Ollama returned {} while listing models: {}",
+                response.status_code,
+                String::from_utf8_lossy(&response.body)
+            );
+        }
+
+        let model_list = serde_json::from_slice::<ModelListResponse>(&response.body)
+            .context("failed to decode Ollama model list")?;
+        Ok(model_list.models)
+    }
+
+    pub fn warm_model(&self, model: &str) -> Result<()> {
+        let messages = [
+            ChatMessage::system("Reply with exactly OK."),
+            ChatMessage::user("OK"),
+        ];
+        self.chat(model, &messages, &[]).map(|_| ())
+    }
+
+    fn chat_path(&self) -> String {
+        format!("{}/chat", self.api_base_path)
+    }
+
+    fn tags_path(&self) -> String {
+        format!("{}/tags", self.api_base_path)
+    }
+
+    fn send_request(
+        &self,
+        method: &str,
+        path: &str,
+        payload: Option<&[u8]>,
+    ) -> Result<ParsedHttpResponse> {
+        let body = payload.unwrap_or(&[]);
+        let mut stream = TcpStream::connect(&self.address)
+            .with_context(|| format!("failed to reach Ollama at http://{}", self.address))?;
+
+        let mut request_head = format!(
+            "{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n",
+            self.host_header
+        );
+        if payload.is_some() {
+            request_head.push_str("Content-Type: application/json\r\n");
+            request_head.push_str(&format!("Content-Length: {}\r\n", body.len()));
+        }
+        request_head.push_str("\r\n");
+
+        stream
+            .write_all(request_head.as_bytes())
+            .context("failed to write HTTP request head")?;
+        if payload.is_some() {
+            stream
+                .write_all(body)
+                .context("failed to write Ollama request body")?;
+        }
+        stream.flush().context("failed to flush Ollama request")?;
+
+        let mut response_bytes = Vec::new();
+        stream
+            .read_to_end(&mut response_bytes)
+            .context("failed to read Ollama response")?;
+
+        parse_http_response(&response_bytes)
     }
 }
 
@@ -172,16 +229,16 @@ fn parse_http_endpoint(base_url: &str) -> Result<(String, String, String)> {
         bail!("Ollama host cannot be empty");
     }
 
-    let chat_path = match raw_path.as_str() {
-        "" => "/api/chat".to_string(),
-        "/api" => "/api/chat".to_string(),
-        "/api/chat" => "/api/chat".to_string(),
+    let api_base_path = match raw_path.as_str() {
+        "" => "/api".to_string(),
+        "/api" => "/api".to_string(),
+        "/api/chat" => "/api".to_string(),
         path => bail!(
             "unsupported Ollama path `{path}`; use a host like `http://127.0.0.1:11434` or `http://127.0.0.1:11434/api`"
         ),
     };
 
-    Ok((host_port.to_string(), host_port.to_string(), chat_path))
+    Ok((host_port.to_string(), host_port.to_string(), api_base_path))
 }
 
 fn parse_http_response(response: &[u8]) -> Result<ParsedHttpResponse> {
@@ -256,16 +313,16 @@ fn find_crlf(bytes: &[u8]) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_http_endpoint, parse_http_response};
+    use super::{parse_http_endpoint, parse_http_response, ModelListResponse};
 
     #[test]
     fn parses_default_ollama_endpoint() {
-        let (address, host_header, path) =
+        let (address, host_header, api_base_path) =
             parse_http_endpoint("http://127.0.0.1:11434/api").expect("parse endpoint");
 
         assert_eq!(address, "127.0.0.1:11434");
         assert_eq!(host_header, "127.0.0.1:11434");
-        assert_eq!(path, "/api/chat");
+        assert_eq!(api_base_path, "/api");
     }
 
     #[test]
@@ -276,5 +333,22 @@ mod tests {
 
         assert_eq!(parsed.status_code, 200);
         assert_eq!(parsed.body, b"test");
+    }
+
+    #[test]
+    fn parses_model_list_response() {
+        let response = br#"{
+            "models": [
+                { "name": "qwen3:4b", "size": 2684354560 },
+                { "name": "llama3.2:latest", "size": 2147483648 }
+            ]
+        }"#;
+
+        let parsed =
+            serde_json::from_slice::<ModelListResponse>(response).expect("parse model list");
+
+        assert_eq!(parsed.models.len(), 2);
+        assert_eq!(parsed.models[0].name, "qwen3:4b");
+        assert_eq!(parsed.models[1].size, 2_147_483_648);
     }
 }

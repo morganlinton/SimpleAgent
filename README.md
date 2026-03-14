@@ -56,10 +56,22 @@ ollama pull llama3.2
 cargo run
 ```
 
+On startup, the app will:
+
+- list the Ollama models already installed on your machine
+- let you pick one to run
+- warm that model before the chat loop starts
+
 Or pass a one-shot prompt:
 
 ```bash
 cargo run -- "What tools do you have, and what files are in this workspace?"
+```
+
+If you want to skip the picker, pass a model explicitly:
+
+```bash
+cargo run -- --model qwen3:4b
 ```
 
 ## How the agent works
@@ -84,7 +96,6 @@ The file tools are intentionally limited to the current workspace so the example
 ## Useful commands
 
 ```bash
-cargo run -- --model qwen3:4b
 cargo run -- --model llama3.2 "Read Cargo.toml and summarize the dependencies."
 cargo test
 ```
