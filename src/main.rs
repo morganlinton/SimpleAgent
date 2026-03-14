@@ -5,6 +5,12 @@ mod tools;
 use std::env;
 use std::io::{self, Write};
 use std::process;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use agent::Agent;
 use anyhow::{bail, Context, Result};
@@ -229,9 +235,8 @@ fn match_model_name<'a>(models: &'a [InstalledModel], input: &str) -> Option<&'a
 }
 
 fn warm_selected_model(client: &OllamaClient, model: &str) -> Result<()> {
-    println!("Loading model `{model}`...");
-    io::stdout().flush().context("failed to flush stdout")?;
-    client.warm_model(model)?;
+    let message = format!("Loading model `{model}`");
+    run_with_spinner(&message, || client.warm_model(model))?;
     println!("Model `{model}` is ready.");
     println!();
     Ok(())
@@ -247,4 +252,44 @@ fn format_model_size(size_bytes: u64) -> String {
     }
 
     format!("{:.0} MB", size / MIB)
+}
+
+fn run_with_spinner<T, F>(message: &str, task: F) -> Result<T>
+where
+    F: FnOnce() -> Result<T>,
+{
+    let active = Arc::new(AtomicBool::new(true));
+    let active_for_thread = Arc::clone(&active);
+    let spinner_message = message.to_string();
+    let spinner_width = spinner_message.len() + 16;
+
+    let spinner_thread = thread::spawn(move || {
+        let frames = ['|', '/', '-', '\\'];
+        let start = Instant::now();
+        let mut frame_index = 0;
+
+        while active_for_thread.load(Ordering::Relaxed) {
+            let elapsed = start.elapsed().as_secs_f32();
+            print!(
+                "\r{} {} {:.1}s",
+                frames[frame_index % frames.len()],
+                spinner_message,
+                elapsed
+            );
+            let _ = io::stdout().flush();
+            thread::sleep(Duration::from_millis(120));
+            frame_index += 1;
+        }
+    });
+
+    let result = task();
+    active.store(false, Ordering::Relaxed);
+    spinner_thread
+        .join()
+        .expect("spinner thread should not panic");
+
+    print!("\r{}\r", " ".repeat(spinner_width));
+    io::stdout().flush().context("failed to flush stdout")?;
+
+    result
 }
