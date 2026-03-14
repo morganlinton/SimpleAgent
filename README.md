@@ -61,6 +61,7 @@ On startup, the app will:
 - list the Ollama models already installed on your machine
 - let you pick one to run
 - warm that model before the chat loop starts
+- stream responses token-by-token once you start chatting
 
 Or pass a one-shot prompt:
 
@@ -111,6 +112,6 @@ OLLAMA_HOST=http://127.0.0.1:11434 cargo run -- "What time is it?"
 Once this base is working, the next useful upgrades would be:
 
 - add a `search_workspace` tool powered by `rg`
-- add streaming output so users can watch the model think and act live
+- stream tool activity separately from model output
 - add an approval gate before running file-writing or shell tools
 - swap the local tools for MCP-backed tools once you want interoperability

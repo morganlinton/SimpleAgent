@@ -101,8 +101,7 @@ fn main() -> Result<()> {
     let agent = Agent::new(client, ToolRegistry::new(workspace_root), model.clone());
 
     if let Some(prompt) = config.prompt {
-        let answer = agent.respond(&prompt)?;
-        println!("{answer}");
+        stream_response(&agent, &prompt, None)?;
         return Ok(());
     }
 
@@ -138,9 +137,8 @@ fn run_repl(agent: &Agent, model: &str) -> Result<()> {
             break;
         }
 
-        match agent.respond(input) {
-            Ok(answer) => {
-                println!("agent> {answer}");
+        match stream_response(agent, input, Some("agent> ")) {
+            Ok(()) => {
                 println!();
             }
             Err(error) => {
@@ -150,6 +148,21 @@ fn run_repl(agent: &Agent, model: &str) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn stream_response(agent: &Agent, prompt: &str, prefix: Option<&str>) -> Result<()> {
+    if let Some(prefix) = prefix {
+        print!("{prefix}");
+        io::stdout().flush().context("failed to flush stdout")?;
+    }
+
+    agent.respond_streaming(prompt, |chunk| {
+        print!("{chunk}");
+        io::stdout().flush().context("failed to flush stdout")
+    })?;
+
+    println!();
     Ok(())
 }
 
