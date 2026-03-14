@@ -117,12 +117,3 @@ You can also point the app at a different local Ollama server:
 ```bash
 OLLAMA_HOST=http://127.0.0.1:11434 cargo run -- "What time is it?"
 ```
-
-## Next directions
-
-Once this base is working, the next useful upgrades would be:
-
-- add a `search_workspace` tool powered by `rg`
-- stream tool activity separately from model output
-- add an approval gate before running file-writing or shell tools
-- swap the local tools for MCP-backed tools once you want interoperability
