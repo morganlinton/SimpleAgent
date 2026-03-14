@@ -152,15 +152,26 @@ fn run_repl(agent: &Agent, model: &str) -> Result<()> {
 }
 
 fn stream_response(agent: &Agent, prompt: &str, prefix: Option<&str>) -> Result<()> {
-    if let Some(prefix) = prefix {
-        print!("{prefix}");
-        io::stdout().flush().context("failed to flush stdout")?;
-    }
+    let spinner_message = match prefix {
+        Some(prefix) => format!("{prefix}Thinking"),
+        None => "Thinking".to_string(),
+    };
+    let mut spinner = Some(Spinner::start(&spinner_message));
 
-    agent.respond_streaming(prompt, |chunk| {
+    let result = agent.respond_streaming(prompt, |chunk| {
+        if let Some(active_spinner) = spinner.take() {
+            active_spinner.stop(prefix)?;
+        }
+
         print!("{chunk}");
         io::stdout().flush().context("failed to flush stdout")
-    })?;
+    });
+
+    if let Some(active_spinner) = spinner.take() {
+        active_spinner.stop(None)?;
+    }
+
+    result?;
 
     println!();
     Ok(())
@@ -271,38 +282,64 @@ fn run_with_spinner<T, F>(message: &str, task: F) -> Result<T>
 where
     F: FnOnce() -> Result<T>,
 {
-    let active = Arc::new(AtomicBool::new(true));
-    let active_for_thread = Arc::clone(&active);
-    let spinner_message = message.to_string();
-    let spinner_width = spinner_message.len() + 16;
-
-    let spinner_thread = thread::spawn(move || {
-        let frames = ['|', '/', '-', '\\'];
-        let start = Instant::now();
-        let mut frame_index = 0;
-
-        while active_for_thread.load(Ordering::Relaxed) {
-            let elapsed = start.elapsed().as_secs_f32();
-            print!(
-                "\r{} {} {:.1}s",
-                frames[frame_index % frames.len()],
-                spinner_message,
-                elapsed
-            );
-            let _ = io::stdout().flush();
-            thread::sleep(Duration::from_millis(120));
-            frame_index += 1;
-        }
-    });
-
+    let spinner = Spinner::start(message);
     let result = task();
-    active.store(false, Ordering::Relaxed);
-    spinner_thread
-        .join()
-        .expect("spinner thread should not panic");
-
-    print!("\r{}\r", " ".repeat(spinner_width));
-    io::stdout().flush().context("failed to flush stdout")?;
-
+    spinner.stop(None)?;
     result
+}
+
+struct Spinner {
+    active: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<()>>,
+    width: usize,
+}
+
+impl Spinner {
+    fn start(message: &str) -> Self {
+        let active = Arc::new(AtomicBool::new(true));
+        let active_for_thread = Arc::clone(&active);
+        let spinner_message = message.to_string();
+        let width = spinner_message.len() + 16;
+
+        let handle = thread::spawn(move || {
+            let frames = ['|', '/', '-', '\\'];
+            let start = Instant::now();
+            let mut frame_index = 0;
+
+            while active_for_thread.load(Ordering::Relaxed) {
+                let elapsed = start.elapsed().as_secs_f32();
+                print!(
+                    "\r{} {} {:.1}s",
+                    frames[frame_index % frames.len()],
+                    spinner_message,
+                    elapsed
+                );
+                let _ = io::stdout().flush();
+                thread::sleep(Duration::from_millis(120));
+                frame_index += 1;
+            }
+        });
+
+        Self {
+            active,
+            handle: Some(handle),
+            width,
+        }
+    }
+
+    fn stop(mut self, restore_text: Option<&str>) -> Result<()> {
+        self.active.store(false, Ordering::Relaxed);
+
+        if let Some(handle) = self.handle.take() {
+            handle.join().expect("spinner thread should not panic");
+        }
+
+        print!("\r{}\r", " ".repeat(self.width));
+        if let Some(restore_text) = restore_text {
+            print!("{restore_text}");
+        }
+        io::stdout().flush().context("failed to flush stdout")?;
+
+        Ok(())
+    }
 }

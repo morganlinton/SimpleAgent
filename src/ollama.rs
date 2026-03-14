@@ -181,12 +181,13 @@ impl OllamaClient {
         let mut collected_tool_calls = Vec::new();
 
         while let Some(chunk) = read_stream_chunk(&mut response.body)? {
+            on_content(&chunk.message.content)?;
+
             if aggregated.role == "assistant" && chunk.message.role != "assistant" {
                 aggregated.role = chunk.message.role.clone();
             }
 
             if !chunk.message.content.is_empty() {
-                on_content(&chunk.message.content)?;
                 aggregated.content.push_str(&chunk.message.content);
             }
 
